@@ -61,27 +61,12 @@ Opcode::~Opcode() noexcept
 
 Opcode &Opcode::operator=(const Opcode &other) noexcept
 {
-    if (this == &other) {
-        return *this;
-    }
+	_opcode = other._opcode;
+	deleteResizableData();
+	clearResizableDataPointers();
+	setResizableData(other.resizableData());
 
-    // Preserve source-owned dynamic data first.
-    const QByteArray otherData = other.resizableData();
-
-    // Delete the destination's current allocation while
-    // _opcode still refers to the destination's opcode.
-    deleteResizableData();
-
-    // Copy the fixed opcode structure.
-    _opcode = other._opcode;
-
-    // Remove the shallow-copied dynamic pointer.
-    clearResizableDataPointers();
-
-    // Perform a proper deep copy.
-    setResizableData(otherData);
-
-    return *this;
+	return *this;
 }
 
 void Opcode::setParams(const char *params, qsizetype maxSize)
