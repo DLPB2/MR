@@ -6955,6 +6955,14 @@ Are you sure you want to continue?</source>
         <translation type="unfinished">アドレスに適用</translation>
     </message>
     <message>
+        <source>Current field</source>
+        <translation>現在のフィールド</translation>
+    </message>
+    <message>
+        <source>All fields</source>
+        <translation>すべてのフィールド</translation>
+    </message>
+    <message>
         <source>Error</source>
         <oldsource>Erreur</oldsource>
         <translatorcomment>Error</translatorcomment>

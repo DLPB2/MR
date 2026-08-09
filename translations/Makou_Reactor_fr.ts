@@ -7570,6 +7570,14 @@ Le supprimer remplacera les appels à ce tutoriel par des appels au tutoriel qui
         <translation>Adresses utilisées</translation>
     </message>
     <message>
+        <source>Current field</source>
+        <translation>Écran courant</translation>
+    </message>
+    <message>
+        <source>All fields</source>
+        <translation>Tous les écrans</translation>
+    </message>
+    <message>
         <source>Error</source>
         <oldsource>Erreur</oldsource>
         <translation>Erreur</translation>
