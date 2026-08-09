@@ -2,6 +2,8 @@ name: Windows x64 Build
 
 on:
   workflow_dispatch:
+  push:
+  pull_request:
 
 permissions:
   contents: read
@@ -59,7 +61,7 @@ jobs:
             if (Test-Path "vcpkg") {
               Remove-Item -Recurse -Force "vcpkg"
             }
-            git clone https://github.com/microsoft/vcpkg.git vcpkg
+            git clone --filter=blob:none https://github.com/microsoft/vcpkg.git vcpkg
           }
           & .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -78,21 +80,51 @@ jobs:
           New-Item -ItemType Directory -Force -Path "${{ env.VCPKG_DEFAULT_BINARY_CACHE }}" | Out-Null
           New-Item -ItemType Directory -Force -Path "${{ env.INSTALL_DIR }}" | Out-Null
 
+      - name: Verify required GUI sources
+        shell: pwsh
+        run: |
+          $required = @(
+            "src\core\Clipboard.cpp",
+            "src\core\Clipboard.h",
+            "src\widgets\OpcodeList.cpp"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              throw "Required GUI source is missing from the repository: $file"
+            }
+          }
+
       - name: Configure Windows x64 Release
         shell: pwsh
         run: |
           cmake -B "${{ env.BUILD_DIR }}" --preset Release `
             -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_DIR }}" `
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DGUI=ON `
             -DCLI=OFF `
             -DPRERELEASE_STRING=" GitHub build"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify Clipboard implementation is compiled
+        shell: pwsh
+        run: |
+          $compileDb = Join-Path "${{ env.BUILD_DIR }}" "compile_commands.json"
+          if (-not (Test-Path $compileDb)) {
+            throw "CMake did not create compile_commands.json"
+          }
+
+          $commands = Get-Content -Raw $compileDb
+          if ($commands -notmatch 'Clipboard[.]cpp') {
+            throw "Clipboard.cpp is missing from the generated GUI compile rules"
+          }
+
+          Write-Host "Verified: Clipboard.cpp is part of the Windows x64 GUI target."
+
       - name: Build and package
         shell: pwsh
         run: |
-          cmake --build "${{ env.BUILD_DIR }}" --target package --parallel 3
+          cmake --build "${{ env.BUILD_DIR }}" --target package --parallel 3 --verbose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare Windows x64 package
