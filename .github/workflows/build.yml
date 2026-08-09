@@ -11,7 +11,6 @@ env:
   BUILD_DIR: ${{ github.workspace }}\build
   INSTALL_DIR: ${{ github.workspace }}\install
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
-  CMAKE_GENERATOR: Ninja
   CMAKE_BUILD_TYPE: Release
   VCPKG_TARGET_TRIPLET: x64-windows
   VCPKG_KEEP_ENV_VARS: PATH;QT_HOST_PATH
@@ -43,24 +42,79 @@ jobs:
           tools: tools_ninja, tools_cmake
           cache: true
 
-      - name: Add Qt build tools to PATH
-        shell: bash
-        run: |
-          echo "$IQTA_TOOLS/Ninja" >> "$GITHUB_PATH"
-          echo "$IQTA_TOOLS/CMake_64/bin" >> "$GITHUB_PATH"
-
-      # The original repository keeps vcpkg as a git submodule. When the
-      # project is uploaded to GitHub from a ZIP, that submodule pointer is
-      # usually lost, so bootstrap a local copy when it is not already there.
-      - name: Bootstrap vcpkg
+      - name: Locate Ninja and CMake
         shell: pwsh
         run: |
-          if (-not (Test-Path "vcpkg\scripts\buildsystems\vcpkg.cmake")) {
+          # install-qt-action installs Qt tools, but the exact Ninja directory
+          # layout is not guaranteed to be directly on PATH. Resolve it once
+          # and pass the absolute executable path to CMake.
+          $ninjaCommand = Get-Command ninja.exe -ErrorAction SilentlyContinue
+          if ($ninjaCommand) {
+            $ninjaExe = $ninjaCommand.Source
+          } else {
+            $ninjaFile = Get-ChildItem -Path $env:IQTA_TOOLS -Filter ninja.exe -File -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if (-not $ninjaFile) {
+              throw "ninja.exe was not found after the Qt tools installation. IQTA_TOOLS=$env:IQTA_TOOLS"
+            }
+            $ninjaExe = $ninjaFile.FullName
+          }
+
+          $ninjaDir = Split-Path -Parent $ninjaExe
+          $ninjaDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "NINJA_EXE=$ninjaExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $qtCMake = Join-Path $env:IQTA_TOOLS "CMake_64\bin"
+          if (Test-Path $qtCMake) {
+            $qtCMake | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+          Write-Host "Using Ninja: $ninjaExe"
+          & $ninjaExe --version
+          cmake --version
+
+      # The original repository keeps vcpkg as a git submodule. ZIP uploads
+      # do not preserve that submodule object. Use a COMPLETE vcpkg clone:
+      # vcpkg's version database checks out historical git tree objects, so a
+      # partial/promisor clone can attempt network fetches during configure.
+      - name: Bootstrap complete vcpkg checkout
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -Raw "vcpkg.json" | ConvertFrom-Json
+          $baseline = $manifest.'builtin-baseline'
+          if (-not $baseline) {
+            throw "vcpkg.json does not contain builtin-baseline"
+          }
+
+          if (Test-Path "vcpkg") {
+            Remove-Item -Recurse -Force "vcpkg"
+          }
+
+          $cloned = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Cloning complete vcpkg repository (attempt $attempt of 3)..."
+            git clone https://github.com/microsoft/vcpkg.git vcpkg
+            if ($LASTEXITCODE -eq 0) {
+              $cloned = $true
+              break
+            }
+
             if (Test-Path "vcpkg") {
               Remove-Item -Recurse -Force "vcpkg"
             }
-            git clone --filter=blob:none https://github.com/microsoft/vcpkg.git vcpkg
+            if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
           }
+
+          if (-not $cloned) {
+            throw "Unable to clone the complete vcpkg repository after 3 attempts."
+          }
+
+          # Pin the tool/ports checkout to the same baseline as the manifest.
+          # The full clone keeps all historical git tree objects locally, so
+          # vcpkg version resolution no longer depends on promisor fetches.
+          git -C vcpkg checkout --detach $baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           & .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -95,7 +149,13 @@ jobs:
       - name: Configure Windows x64 Release
         shell: pwsh
         run: |
-          cmake -B "${{ env.BUILD_DIR }}" --preset Release `
+          $toolchain = Join-Path "${{ github.workspace }}" "vcpkg\scripts\buildsystems\vcpkg.cmake"
+
+          cmake -S "${{ github.workspace }}" -B "${{ env.BUILD_DIR }}" `
+            -G Ninja `
+            -DCMAKE_MAKE_PROGRAM="$env:NINJA_EXE" `
+            -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
+            -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_DIR }}" `
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
