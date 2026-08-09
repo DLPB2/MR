@@ -38,6 +38,13 @@ project("Makou Reactor" VERSION 2.2.0 LANGUAGES CXX
     HOMEPAGE_URL "https://github.com/myst6re/makoureactor"
 )
 
+if(NOT WIN32)
+    message(FATAL_ERROR "Makou Reactor supports Windows only.")
+endif()
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Makou Reactor requires a 64-bit Windows toolchain.")
+endif()
+
 # Try to autodetect Qt path if not specified
 include(qt.cmake)
 
@@ -73,7 +80,7 @@ add_compile_definitions(
     MAKOU_REACTOR_VERSION_TWEAK=0
 )
 
-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets OpenGLWidgets Svg OpenGL LinguistTools Core5Compat Xml Quick REQUIRED)
+find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets OpenGLWidgets Svg OpenGL LinguistTools Core5Compat REQUIRED)
 find_package(ZLIB REQUIRED)
 
 set(REQUIRED_FF7TK_VERSION 1.2.0)
@@ -347,11 +354,6 @@ set(PROJECT_SOURCES
     "src/widgets/ExportChunksDialog.h"
 )
 
-if(APPLE)
-    list(APPEND PROJECT_SOURCES
-        "src/core/SystemColor.mm"
-    )
-endif()
 
 set(PROJECT_CLI_SOURCES
     "src/Arguments.cpp"
@@ -489,29 +491,14 @@ set(PROJECT_CLI_SOURCES
     "src/main.cpp"
 )
 
-if(APPLE)
-    list(APPEND PROJECT_CLI_SOURCES
-        "src/core/SystemColor.mm"
-    )
-endif()
 
 set(RESOURCES "src/qt/${RELEASE_NAME}.qrc" "icons/icons.qrc")
-
-if(APPLE)
-    set(ICON_FILE "deploy/macosx/${RELEASE_NAME}.icns")
-    set(EXTRA_RESOURCES_GUI ${ICON_FILE})
-    set(EXTRA_RESOURCES_CLI "")
-
-    set_source_files_properties(${ICON_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-elseif (WIN32)
-    set(ICON_FILE "src/qt/images/logo-shinra.ico")
-    set(EXTRA_RESOURCES_GUI "src/qt/${RELEASE_NAME}.rc")
-    set(EXTRA_RESOURCES_CLI "${EXTRA_RESOURCES_GUI}")
-endif()
+set(EXTRA_RESOURCES_GUI "src/qt/${RELEASE_NAME}.rc")
+set(EXTRA_RESOURCES_CLI "${EXTRA_RESOURCES_GUI}")
 
 # GUI
 if(GUI)
-    qt_add_executable(${GUI_TARGET} MANUAL_FINALIZATION MACOSX_BUNDLE WIN32 ${PROJECT_SOURCES} ${RESOURCES} ${EXTRA_RESOURCES_GUI})
+    qt_add_executable(${GUI_TARGET} MANUAL_FINALIZATION WIN32 ${PROJECT_SOURCES} ${RESOURCES} ${EXTRA_RESOURCES_GUI})
 
     target_include_directories(${GUI_TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/src")
     target_link_libraries(${GUI_TARGET} PRIVATE
@@ -527,29 +514,15 @@ if(GUI)
         ff7tk::ff7tkUtils
     )
 
-    if(${QT_VERSION_MAJOR} EQUAL 6)
-        target_link_libraries(${GUI_TARGET} PRIVATE Qt6::Core5Compat)
-
-        target_compile_definitions(${GUI_TARGET}
-            PRIVATE TASKBAR_BUTTON=1
-            GUI=1
-        )
-    endif()
-
-    set_target_properties(${GUI_TARGET} PROPERTIES
-        MACOSX_BUNDLE_BUNDLE_NAME "Makou Reactor"
-        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-        MACOSX_BUNDLE_LONG_VERSION_STRING ${PROJECT_VERSION}
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER org.myst6re.makoureactor
-        MACOSX_BUNDLE_ICON_FILE ${RELEASE_NAME}.icns
+    target_link_libraries(${GUI_TARGET} PRIVATE Qt6::Core5Compat)
+    target_compile_definitions(${GUI_TARGET}
+        PRIVATE TASKBAR_BUTTON=1
+        GUI=1
     )
 
-    if(APPLE OR WIN32)
-        set_target_properties(${GUI_TARGET} PROPERTIES OUTPUT_NAME "${PROJECT_NAME}")
-    endif()
+    set_target_properties(${GUI_TARGET} PROPERTIES OUTPUT_NAME "${PROJECT_NAME}")
 
-    if (WIN32)
+    if(MSVC)
         target_compile_options(
             ${GUI_TARGET}
             PRIVATE /Qpar
@@ -576,7 +549,7 @@ if(CLI)
     target_compile_definitions(${CLI_TARGET}
         PRIVATE MR_CONSOLE=1 QT_NO_DEBUG_OUTPUT=1
     )
-    if (WIN32)
+    if(MSVC)
         target_compile_options(
             ${CLI_TARGET}
             PRIVATE /Qpar
@@ -585,60 +558,31 @@ if(CLI)
     endif()
 endif()
 
-include(GNUInstallDirs)
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT AND DEFINED ENV{ProgramFiles})
+    set(CMAKE_INSTALL_PREFIX "$ENV{ProgramFiles}/${PROJECT_NAME}" CACHE PATH "Default Windows x64 install directory" FORCE)
+endif()
 
-if(APPLE)
-    if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-        set(CMAKE_INSTALL_PREFIX "/Applications" CACHE PATH "..." FORCE)
-    endif()
-    if(NOT QT_DEPLOY_TMP_DIR)
-        set(QT_DEPLOY_TMP_DIR "${CMAKE_BINARY_DIR}" CACHE PATH "Directory to run deployqt scripts")
-    endif()
-elseif(WIN32)
-    if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT AND ENV{ProgramFiles})
-        # Force Program Files for x64 programs (CMake uses x86 by default)
-        set(CMAKE_INSTALL_PREFIX "$ENV{ProgramFiles}/${PROJECT_NAME}" CACHE PATH "..." FORCE)
-    endif()
-    if(NOT QT_DEPLOY_TMP_DIR)
-        set(QT_DEPLOY_TMP_DIR "${CMAKE_BINARY_DIR}/win32-deploy" CACHE PATH "Directory to run deployqt scripts")
-    endif()
-    if(GUI)
-        install(TARGETS ${GUI_TARGET} DESTINATION "${QT_DEPLOY_TMP_DIR}")
-    endif()
-    if(CLI)
-        install(TARGETS ${CLI_TARGET} DESTINATION "${QT_DEPLOY_TMP_DIR}")
-    endif()
+if(NOT QT_DEPLOY_TMP_DIR)
+    set(QT_DEPLOY_TMP_DIR "${CMAKE_BINARY_DIR}/windows-deploy" CACHE PATH "Directory used by windeployqt")
+endif()
+
+if(GUI)
+    install(TARGETS ${GUI_TARGET} RUNTIME DESTINATION "${QT_DEPLOY_TMP_DIR}")
+endif()
+if(CLI)
+    install(TARGETS ${CLI_TARGET} RUNTIME DESTINATION "${QT_DEPLOY_TMP_DIR}")
 endif()
 
 add_subdirectory(deploy)
 
-if(APPLE)
-    if(GUI)
-        install(TARGETS ${GUI_TARGET} BUNDLE DESTINATION ".")
-    endif()
-    if(CLI)
-        install(TARGETS ${CLI_TARGET} RUNTIME EXCLUDE_FROM_ALL)
-    endif()
-elseif(WIN32)
-    if(GUI)
-        install(TARGETS ${GUI_TARGET} RUNTIME DESTINATION ".")
-    endif()
-    if(CLI)
-        install(TARGETS ${CLI_TARGET} RUNTIME DESTINATION ".")
-    endif()
-    install(DIRECTORY "${QT_DEPLOY_TMP_DIR}/" DESTINATION ".")
-    install(CODE "file(REMOVE_RECURSE \"${QT_DEPLOY_TMP_DIR}\")")
-else()
-    install(FILES ${CMAKE_SOURCE_DIR}/src/qt/images/logo-shinra.png DESTINATION share/icons/hicolor/256x256/apps RENAME io.github.myst6re.makoureactor.png)
-    install(FILES ${CMAKE_SOURCE_DIR}/deploy/linux/io.github.myst6re.makoureactor.desktop DESTINATION share/applications)
-    install(FILES ${CMAKE_SOURCE_DIR}/deploy/linux/io.github.myst6re.makoureactor.metainfo.xml DESTINATION share/metainfo)
-    if(GUI)
-        install(TARGETS ${GUI_TARGET} RUNTIME)
-    endif()
-    if(CLI)
-        install(TARGETS ${CLI_TARGET} RUNTIME)
-    endif()
+if(GUI)
+    install(TARGETS ${GUI_TARGET} RUNTIME DESTINATION ".")
 endif()
+if(CLI)
+    install(TARGETS ${CLI_TARGET} RUNTIME DESTINATION ".")
+endif()
+install(DIRECTORY "${QT_DEPLOY_TMP_DIR}/" DESTINATION ".")
+install(CODE "file(REMOVE_RECURSE \"${QT_DEPLOY_TMP_DIR}\")")
 
 if(GUI)
     qt_finalize_executable(${GUI_TARGET})
@@ -647,23 +591,7 @@ if(CLI)
     qt_finalize_executable(${CLI_TARGET})
 endif()
 
-if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
-    set(CPACK_SYSTEM_NAME "macos")
-    set(CPACK_GENERATOR "DragNDrop")
-elseif(CMAKE_SYSTEM_NAME MATCHES "Windows")
-    set(CPACK_GENERATOR "ZIP")
-else()
-    set(CPACK_GENERATOR "TXZ")
-endif()
-
-set(CPACK_DEBIAN_PACKAGE_NAME "makoureactor")
-set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "myst6re@gmail.com")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libff7tk (>= ${REQUIRED_FF7TK_VERSION}) | libff7tk-all (>=${REQUIRED_FF7TK_VERSION}), qt6-qpa-plugins")
-set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-
-set(CPACK_PACKAGE_NAME makoureactor)
-set(CPACK_SOURCE_IGNORE_FILES ".git/*;*.user;*.yml;*.github/*")
-set(CPACK_SOURCE_GENERATOR "ZIP;TGZ")
-
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME "makoureactor")
+set(CPACK_PACKAGE_FILE_NAME "${RELEASE_NAME}-${PROJECT_VERSION}-Windows-x64")
 include(CPack)
