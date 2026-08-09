@@ -22,6 +22,7 @@
 #include "Data.h"
 #include "core/field/Field.h"
 #include "core/field/Opcode.h"
+#include <algorithm>
 
 OpcodeList::OpcodeList(QWidget *parent) :
     QTreeWidget(parent), _field(nullptr), _grpScript(nullptr), _script(nullptr), errorLine(-1),
@@ -88,7 +89,7 @@ OpcodeList::OpcodeList(QWidget *parent) :
 	disableTree_A = new QAction(tr("Disable tree"), this);
 	search_A = new QAction(tr("Search opcode..."), this);
 
-	connect(edit_A, &QAction::triggered, this, &OpcodeList::scriptEditor);
+	connect(edit_A, &QAction::triggered, this, [this]() { scriptEditor(true); });
 	connect(add_A, &QAction::triggered, this, &OpcodeList::add);
 	connect(del_A, &QAction::triggered, this, &OpcodeList::del);
 	connect(cut_A, &QAction::triggered, this, &OpcodeList::cut);
@@ -169,7 +170,8 @@ OpcodeList::OpcodeList(QWidget *parent) :
 	setMinimumWidth(_toolBar->sizeHint().width());
 	setMinimumHeight(_toolBar->sizeHint().width());
 
-	connect(this, &OpcodeList::itemDoubleClicked, this, &OpcodeList::scriptEditor);
+	connect(this, &OpcodeList::itemDoubleClicked, this,
+	        [this](QTreeWidgetItem *, int) { scriptEditor(true); });
 	connect(this, &OpcodeList::itemSelectionChanged, this, &OpcodeList::itemSelected);
 	connect(this, &OpcodeList::currentItemChanged, this, &OpcodeList::evidence);
 	connect(QApplication::clipboard(), &QClipboard::changed, this, &OpcodeList::adjustPasteAction);
@@ -740,7 +742,8 @@ void OpcodeList::redo()
 
 void OpcodeList::scriptEditor(bool modify)
 {
-	if (_script == nullptr) {
+	if (_field == nullptr || _grpScript == nullptr || _script == nullptr
+	        || _field->scriptsAndTexts() == nullptr) {
 		return;
 	}
 
@@ -808,6 +811,11 @@ void OpcodeList::del(bool totalDel)
 		return;
 	}
 	QList<int> selectedIDs = this->selectedIDs();
+	std::sort(selectedIDs.begin(), selectedIDs.end());
+	selectedIDs.erase(std::remove_if(selectedIDs.begin(), selectedIDs.end(),
+	                                 [this](int id) {
+		return id < 0 || id >= _script->size();
+	}), selectedIDs.end());
 	if (selectedIDs.isEmpty()) {
 		return;
 	}
@@ -825,14 +833,11 @@ void OpcodeList::del(bool totalDel)
 	}
 
 	saveExpandedItems();
-	
-	std::sort(selectedIDs.begin(), selectedIDs.end());
-	for (qsizetype i = selectedIDs.size() - 1; i >= 0; --i) {
-		int opId = selectedIDs.at(i);
-		if (opId >= 0 && opId < _script->size()) {
-			oldVersions.prepend(_script->opcode(quint16(opId)));
-			_script->removeOpcode(quint16(opId));
-		}
+
+	for (qsizetype i = selectedIDs.size(); i-- > 0;) {
+		const int opcodeID = selectedIDs.at(i);
+		oldVersions.prepend(_script->opcode(opcodeID));
+		_script->removeOpcode(opcodeID);
 	}
 
 	fill();
