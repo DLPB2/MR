@@ -1,0 +1,128 @@
+name: Windows x64 Build
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: 6.9.3
+  BUILD_DIR: ${{ github.workspace }}\build
+  INSTALL_DIR: ${{ github.workspace }}\install
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
+  CMAKE_GENERATOR: Ninja
+  CMAKE_BUILD_TYPE: Release
+  VCPKG_TARGET_TRIPLET: x64-windows
+  VCPKG_KEEP_ENV_VARS: PATH;QT_HOST_PATH
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 GUI
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Enable MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qt5compat
+          tools: tools_ninja, tools_cmake
+          cache: true
+
+      - name: Add Qt build tools to PATH
+        shell: bash
+        run: |
+          echo "$IQTA_TOOLS/Ninja" >> "$GITHUB_PATH"
+          echo "$IQTA_TOOLS/CMake_64/bin" >> "$GITHUB_PATH"
+
+      # The original repository keeps vcpkg as a git submodule. When the
+      # project is uploaded to GitHub from a ZIP, that submodule pointer is
+      # usually lost, so bootstrap a local copy when it is not already there.
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "vcpkg\scripts\buildsystems\vcpkg.cmake")) {
+            if (Test-Path "vcpkg") {
+              Remove-Item -Recurse -Force "vcpkg"
+            }
+            git clone --filter=blob:none https://github.com/microsoft/vcpkg.git vcpkg
+          }
+          & .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.vcpkg/**') }}
+          restore-keys: |
+            vcpkg-windows-x64-
+
+      - name: Create build directories
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ env.VCPKG_DEFAULT_BINARY_CACHE }}" | Out-Null
+          New-Item -ItemType Directory -Force -Path "${{ env.INSTALL_DIR }}" | Out-Null
+
+      - name: Configure Windows x64 Release
+        shell: pwsh
+        run: |
+          cmake -B "${{ env.BUILD_DIR }}" --preset Release `
+            -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_DIR }}" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DGUI=ON `
+            -DCLI=OFF `
+            -DPRERELEASE_STRING=" GitHub build"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          cmake --build "${{ env.BUILD_DIR }}" --target package --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Prepare Windows x64 package
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem -Path "${{ env.BUILD_DIR }}" -Filter "*.zip" -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $package) {
+            throw "CMake/CPack did not create a ZIP package in ${{ env.BUILD_DIR }}"
+          }
+
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          Copy-Item $package.FullName "dist\Makou_Reactor-Windows-x64.zip"
+          Write-Host "Package: $($package.FullName)"
+
+      - name: Upload Windows x64 build
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/Makou_Reactor-Windows-x64.zip
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload vcpkg logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vcpkg-build-logs
+          path: vcpkg/buildtrees/**/*.log
+          if-no-files-found: ignore
