@@ -2,8 +2,6 @@ name: Windows x64 Build
 
 on:
   workflow_dispatch:
-  push:
-  pull_request:
 
 permissions:
   contents: read
