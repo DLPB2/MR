@@ -35,6 +35,7 @@ struct RendererVertex {
 	GLfloat texcoord[2]{0.0f, 0.0f};
 };
 
+
 enum RendererPrimitiveType {
 	PT_POINTS = GL_POINTS,
 	PT_LINES = GL_LINES,
@@ -42,11 +43,9 @@ enum RendererPrimitiveType {
 	PT_LINE_STRIP = GL_LINE_STRIP,
 	PT_TRIANGLES = GL_TRIANGLES,
 	PT_TRIANGLE_STRIP = GL_TRIANGLE_STRIP,
-	PT_TRIANGLE_FAN = GL_TRIANGLE_FAN,
-	PT_QUADS = GL_QUADS,
-	PT_QUAD_STRIP = GL_QUAD_STRIP,
-	PT_POLYGON = GL_POLYGON
+	PT_TRIANGLE_FAN = GL_TRIANGLE_FAN
 };
+
 
 class Renderer : public QObject
 {
