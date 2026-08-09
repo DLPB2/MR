@@ -11,6 +11,8 @@ vcpkg_from_github(
   REF v1.3.1
   SHA512 4800bfaa50d5dc471b703b2c09f45da3478ba7dbc78625d55214069d3ec7acc898663934a0c5195e2170a98dfd3c32299198eee1e675936301cc72a528e289ed
   HEAD_REF master
+  PATCHES
+    psx-cdrom-edc-ecc.patch
 )
 
 vcpkg_cmake_configure(
