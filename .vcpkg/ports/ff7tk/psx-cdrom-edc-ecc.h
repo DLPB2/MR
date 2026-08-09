@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// CD-ROM EDC/ECC generation helpers used by the Makou Reactor ff7tk port.
+// CD-ROM raw-sector EDC/ECC helpers for the Makou Reactor ff7tk overlay.
 #pragma once
 
 #include <array>
@@ -108,7 +108,9 @@ inline bool hasCdRomSync(const quint8 *sector)
     return true;
 }
 
-inline bool updateSectorEdcEcc(QByteArray &sectorData, bool updateForm2Edc = true)
+// Recompute integrity fields for a sector whose payload has actually changed.
+// Untouched sectors are never passed through this function by the ff7tk changes.
+inline bool updateSectorEdcEcc(QByteArray &sectorData)
 {
     if (sectorData.size() != SECTOR_SIZE) {
         return false;
@@ -116,8 +118,7 @@ inline bool updateSectorEdcEcc(QByteArray &sectorData, bool updateForm2Edc = tru
 
     auto *sector = reinterpret_cast<quint8 *>(sectorData.data());
     if (!hasCdRomSync(sector)) {
-        // Audio or another non-data sector: preserve it exactly.
-        return true;
+        return true; // Audio/non-data: nothing to regenerate.
     }
 
     const quint8 mode = sector[15];
@@ -134,35 +135,30 @@ inline bool updateSectorEdcEcc(QByteArray &sectorData, bool updateForm2Edc = tru
         return true;
     }
 
-    // CD-ROM XA sectors repeat the four-byte subheader at bytes 16..23.
-    // Plain Mode 2 sectors have no Form-1 EDC/ECC fields to regenerate here.
+    // XA repeats the four-byte subheader at 16..19 and 20..23.
     if (std::memcmp(sector + 16, sector + 20, 4) != 0) {
-        return true;
+        return true; // Plain Mode 2, not XA Form 1/2.
     }
 
-    // Mode 2 Form 2: 2324 bytes of user data followed by a four-byte EDC.
-    // There is no P/Q ECC. Relocating a raw sector changes only its MSF
-    // address, which is outside the Form-2 EDC coverage.
+    // XA Mode 2 Form 2: 2324 user bytes + EDC, no P/Q ECC.
     if ((sector[18] & 0x20U) != 0) {
-        if (updateForm2Edc) {
-            const quint32 edc = computeEdc(sector + 16, Mode2Form2EdcOffset - 16);
-            writeEdcLittleEndian(sector + Mode2Form2EdcOffset, edc);
-        }
+        const quint32 edc = computeEdc(sector + 16, Mode2Form2EdcOffset - 16);
+        writeEdcLittleEndian(sector + Mode2Form2EdcOffset, edc);
         return true;
     }
 
-    // Mode 2 Form 1: EDC covers the duplicated XA subheader and 2048 data
-    // bytes (raw bytes 16..2071), followed by P and Q Reed-Solomon parity.
+    // XA Mode 2 Form 1: EDC covers bytes 16..2071.
     const quint32 edc = computeEdc(sector + 16, Mode2Form1EdcOffset - 16);
     writeEdcLittleEndian(sector + Mode2Form1EdcOffset, edc);
 
-    // For XA Form 1, bytes 12..15 are treated as zero while generating P/Q.
-    quint8 header[4];
-    std::memcpy(header, sector + 12, sizeof(header));
-    std::memset(sector + 12, 0, sizeof(header));
+    // P/Q ECC is position-independent for XA Form 1: bytes 12..15 are
+    // treated as zero while parity is calculated.
+    quint8 addressAndMode[4];
+    std::memcpy(addressAndMode, sector + 12, sizeof(addressAndMode));
+    std::memset(sector + 12, 0, sizeof(addressAndMode));
     computeEcc(sector + 12, 86, 24, 2, 86, sector + EccPOffset);
     computeEcc(sector + 12, 52, 43, 86, 88, sector + EccQOffset);
-    std::memcpy(sector + 12, header, sizeof(header));
+    std::memcpy(sector + 12, addressAndMode, sizeof(addressAndMode));
 
     return true;
 }
@@ -178,7 +174,6 @@ inline bool repairSector(IsoArchiveIO &io, quint32 num)
 
     QByteArray sectorData = io.read(SECTOR_SIZE);
     bool ok = sectorData.size() == SECTOR_SIZE && updateSectorEdcEcc(sectorData);
-
     if (ok) {
         ok = io.seek(sectorPos) && io.write(sectorData) == SECTOR_SIZE;
     }
@@ -189,7 +184,11 @@ inline bool repairSector(IsoArchiveIO &io, quint32 num)
     return ok;
 }
 
-inline bool writeRepairedSector(IsoArchiveIO &io, QByteArray sectorData)
+// Relocate an existing raw sector. For PS1 XA Mode 2 sectors the EDC/ECC does
+// not depend on the MSF address, so preserve its original integrity bytes
+// exactly (including any intentional anomaly). Mode 1 does include the address
+// in EDC, so it must be regenerated after moving.
+inline bool writeRelocatedSector(IsoArchiveIO &io, QByteArray sectorData)
 {
     if (sectorData.size() != SECTOR_SIZE || io.pos() % SECTOR_SIZE != 0) {
         return false;
@@ -197,12 +196,14 @@ inline bool writeRepairedSector(IsoArchiveIO &io, QByteArray sectorData)
 
     auto *sector = reinterpret_cast<quint8 *>(sectorData.data());
     if (hasCdRomSync(sector) && (sector[15] == 1 || sector[15] == 2)) {
+        const quint8 mode = sector[15];
         const QByteArray address = IsoArchiveIO::int2Header(io.currentSector());
+        if (address.size() != 3) {
+            return false;
+        }
         std::memcpy(sector + 12, address.constData(), 3);
 
-        // Form-2 EDC does not cover the MSF address, so when merely moving an
-        // existing raw Form-2 sector preserve its original EDC and payload.
-        if (!updateSectorEdcEcc(sectorData, false)) {
+        if (mode == 1 && !updateSectorEdcEcc(sectorData)) {
             return false;
         }
     }

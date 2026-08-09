@@ -13,44 +13,49 @@ vcpkg_from_github(
   HEAD_REF master
 )
 
-# Keep the upstream archive pristine and perform deterministic source edits
-# here. This avoids git-apply/line-ending issues on Windows runners.
+# Replace a complete source region using symbol markers rather than matching
+# the original function body. This is deliberately insensitive to CRLF/LF and
+# harmless upstream whitespace differences.
+function(_mr_replace_region FILE_PATH START_MARKER END_MARKER REPLACEMENT)
+  file(READ "${FILE_PATH}" _text)
+  string(FIND "${_text}" "${START_MARKER}" _start)
+  if(_start EQUAL -1)
+    message(FATAL_ERROR "ff7tk PSX fix: start marker not found: ${START_MARKER}")
+  endif()
+
+  string(FIND "${_text}" "${END_MARKER}" _end)
+  if(_end EQUAL -1 OR _end LESS _start)
+    message(FATAL_ERROR "ff7tk PSX fix: end marker not found after start: ${END_MARKER}")
+  endif()
+
+  string(LENGTH "${_text}" _text_len)
+  math(EXPR _suffix_len "${_text_len} - ${_end}")
+  string(SUBSTRING "${_text}" 0 ${_start} _prefix)
+  string(SUBSTRING "${_text}" ${_end} ${_suffix_len} _suffix)
+  file(WRITE "${FILE_PATH}" "${_prefix}${REPLACEMENT}${_suffix}")
+endfunction()
+
 set(_iso_cpp "${SOURCE_PATH}/src/formats/IsoArchive.cpp")
 file(COPY "${CMAKE_CURRENT_LIST_DIR}/psx-cdrom-edc-ecc.h"
      DESTINATION "${SOURCE_PATH}/src/formats")
 
-vcpkg_replace_string("${_iso_cpp}"
-[=[#include <QtEndian>
-]=]
-[=[#include <QtEndian>
-#include "psx-cdrom-edc-ecc.h"
-]=])
+# Add the helper include without depending on source line endings.
+file(READ "${_iso_cpp}" _iso_text)
+string(FIND "${_iso_text}" "#include \"psx-cdrom-edc-ecc.h\"" _helper_include)
+if(_helper_include EQUAL -1)
+  string(FIND "${_iso_text}" "#include <QtEndian>" _qtendian_include)
+  if(_qtendian_include EQUAL -1)
+    message(FATAL_ERROR "ff7tk PSX fix: QtEndian include marker not found")
+  endif()
+  string(REPLACE "#include <QtEndian>"
+                 "#include <QtEndian>\n#include \"psx-cdrom-edc-ecc.h\""
+                 _iso_text "${_iso_text}")
+  file(WRITE "${_iso_cpp}" "${_iso_text}")
+endif()
 
-vcpkg_replace_string("${_iso_cpp}"
-[=[qint64 IsoArchiveIO::writeIso(const char *data, qint64 maxSize)
-{
-    qint64 write, writeTotal = 0, seqLen;
-
-    if (!seekIso(isoPos(pos()))) {
-        return 0;
-    }
-
-    seqLen = std::min(SECTOR_SIZE_HEADER + SECTOR_SIZE_DATA - (pos() % SECTOR_SIZE), maxSize);
-    while ((write = this->write(data, seqLen)) > 0) {
-        data += write;
-        maxSize -= write;
-        writeTotal += write;
-        seqLen = std::min(qint64(2048), maxSize);
-        // If we are at the end of the sector
-        if (pos() % SECTOR_SIZE >= SECTOR_SIZE_HEADER + SECTOR_SIZE_DATA
-                && !seek(pos() + SECTOR_SIZE_HEADER + SECTOR_SIZE_FOOTER)) {
-            break;
-        }
-    }
-
-    return write < 0 ? write : writeTotal;
-}
-]=]
+_mr_replace_region("${_iso_cpp}"
+  "qint64 IsoArchiveIO::writeIso(const char *data, qint64 maxSize)"
+  "qint64 IsoArchiveIO::writeIso(const QByteArray &byteArray)"
 [=[qint64 IsoArchiveIO::writeIso(const char *data, qint64 maxSize)
 {
     qint64 write = 0, writeTotal = 0, seqLen;
@@ -67,7 +72,6 @@ vcpkg_replace_string("${_iso_cpp}"
         maxSize -= write;
         writeTotal += write;
         seqLen = std::min(qint64(SECTOR_SIZE_DATA), maxSize);
-        // If we are at the end of the sector
         if (pos() % SECTOR_SIZE >= SECTOR_SIZE_HEADER + SECTOR_SIZE_DATA
                 && !seek(pos() + SECTOR_SIZE_HEADER + SECTOR_SIZE_FOOTER)) {
             break;
@@ -88,106 +92,113 @@ vcpkg_replace_string("${_iso_cpp}"
 }
 ]=])
 
-vcpkg_replace_string("${_iso_cpp}"
+_mr_replace_region("${_iso_cpp}"
+  "bool IsoArchiveIO::writeSector(const QByteArray &data, quint8 type, quint8 mode)"
+  "IsoFileIO::IsoFileIO(IsoArchiveIO *io, const IsoFile *infos, QObject *parent)"
 [=[bool IsoArchiveIO::writeSector(const QByteArray &data, quint8 type, quint8 mode)
 {
-    qint64 dataSize = data.size();
-    quint32 sectorCur = currentSector();
+    const qint64 dataSize = data.size();
+    const quint32 sectorCur = currentSector();
     QByteArray sectorData;
 
     Q_ASSERT(pos() % SECTOR_SIZE == 0);
     Q_ASSERT(dataSize <= SECTOR_SIZE_DATA);
-    // sector header
-    sectorData = buildHeader(sectorCur, type, mode);
-    // data
-    sectorData.append(data);
-    if (dataSize != SECTOR_SIZE_DATA) {
-        sectorData.append(QByteArray(SECTOR_SIZE_DATA - dataSize, '\x00'));
-    }
-    // sector footer
-    sectorData.append(buildFooter(sectorCur));
-
-    return SECTOR_SIZE == write(sectorData);
-}
-]=]
-[=[bool IsoArchiveIO::writeSector(const QByteArray &data, quint8 type, quint8 mode)
-{
-    qint64 dataSize = data.size();
-    quint32 sectorCur = currentSector();
-    QByteArray sectorData;
-
-    Q_ASSERT(pos() % SECTOR_SIZE == 0);
-    Q_ASSERT(dataSize <= SECTOR_SIZE_DATA);
-    if (mode != 2 || dataSize > SECTOR_SIZE_DATA || pos() % SECTOR_SIZE != 0) {
+    if (pos() % SECTOR_SIZE != 0 || dataSize < 0 || dataSize > SECTOR_SIZE_DATA || mode != 2) {
         return false;
     }
 
-    // sector header
     sectorData = buildHeader(sectorCur, type, mode);
-    // data
     sectorData.append(data);
     if (dataSize != SECTOR_SIZE_DATA) {
         sectorData.append(QByteArray(SECTOR_SIZE_DATA - dataSize, '\x00'));
     }
-    // Reserve the complete raw-sector footer, then populate its EDC/ECC.
+
+    // Reserve the complete raw-sector tail and generate the correct XA
+    // Form-1 EDC/P/Q ECC (or Form-2 EDC when the submode requests Form 2).
     sectorData.append(QByteArray(SECTOR_SIZE_FOOTER, '\x00'));
     if (!ff7tk_psx_cd::updateSectorEdcEcc(sectorData)) {
         return false;
     }
 
-    return SECTOR_SIZE == write(sectorData);
+    return write(sectorData) == SECTOR_SIZE;
 }
+
 ]=])
 
-vcpkg_replace_string("${_iso_cpp}"
-[=[        destinationIO->seekIso(SECTOR_SIZE_DATA * 16 + 80);// sector 16 : pos 80 size 4+4
-        quint32 volume_space_size = quint32(destinationIO->size() / SECTOR_SIZE), volume_space_size2 = qToBigEndian(volume_space_size);
-        destinationIO->write((char*)&volume_space_size, 4);
-        destinationIO->write((char*)&volume_space_size2, 4);
-]=]
-[=[        if (!destinationIO->seekIso(SECTOR_SIZE_DATA * 16 + 80)) {// sector 16 : pos 80 size 4+4
-            setError(Archive::WriteError, destinationIO->errorString());
+_mr_replace_region("${_iso_cpp}"
+  "bool IsoArchive::copySectors(IsoArchiveIO *out, qint64 sectorCount, ArchiveObserver *control, bool repair)"
+  "bool IsoArchive::writeFile(QIODevice *in, quint32 sectorCount, ArchiveObserver *control)"
+[=[bool IsoArchive::copySectors(IsoArchiveIO *out, qint64 sectorCount, ArchiveObserver *control, bool repair)
+{
+    if (sectorCount < 0) {
+        qWarning() << "IsoArchive::copySectors sectorCount < 0" << sectorCount;
+        setError(Archive::InvalidError);
+        return false;
+    }
+    Q_ASSERT(out->pos() % SECTOR_SIZE == 0);
+    Q_ASSERT(_io.pos() % SECTOR_SIZE == 0);
+
+    for (qint64 i = 0; i < sectorCount; ++i) {
+        if (control && control->observerWasCanceled()) {
+            setError(Archive::AbortError);
             return false;
         }
-        quint32 volume_space_size = quint32(destinationIO->size() / SECTOR_SIZE), volume_space_size2 = qToBigEndian(volume_space_size);
-        if (destinationIO->writeIso((char*)&volume_space_size, 4) != 4
-                || destinationIO->writeIso((char*)&volume_space_size2, 4) != 4) {
-            setError(Archive::WriteError, destinationIO->errorString());
+
+        QByteArray data = _io.read(SECTOR_SIZE);
+        if (data.size() != SECTOR_SIZE) {
+            qWarning() << "IsoArchive::copySectors read error" << data.size() << SECTOR_SIZE;
+            setError(Archive::ReadError, _io.errorString());
             return false;
         }
+
+        const bool written = repair
+                ? ff7tk_psx_cd::writeRelocatedSector(*out, data)
+                : out->write(data) == SECTOR_SIZE;
+        if (!written) {
+            qWarning() << "IsoArchive::copySectors write error";
+            setError(Archive::WriteError, out->errorString());
+            return false;
+        }
+
+        if (control) {
+            control->setObserverValue(int(out->currentSector()));
+        }
+    }
+
+    return true;
+}
+
 ]=])
 
-vcpkg_replace_string("${_iso_cpp}"
-[=[        } else {
-            quint8 type, mode;
-            IsoArchiveIO::headerInfos(data, &type, &mode);
-            if (!out->writeSector(data.mid(SECTOR_SIZE_HEADER, SECTOR_SIZE_DATA), type, mode)) {
-                qWarning() << "IsoArchive::copySectors writeSector error";
-                setError(Archive::WriteError, out->errorString());
-                return false;
-            }
-        }
-]=]
-[=[        } else {
-            if (!ff7tk_psx_cd::writeRepairedSector(*out, data)) {
-                qWarning() << "IsoArchive::copySectors writeRepairedSector error";
-                setError(Archive::WriteError, out->errorString());
-                return false;
-            }
-        }
-]=])
+# The volume descriptor size update bypasses writeIso upstream. Route these two
+# payload writes through writeIso so the raw sector EDC/ECC is regenerated.
+file(READ "${_iso_cpp}" _iso_text)
+set(_old_volume_write1 "destinationIO->write((char*)&volume_space_size, 4);")
+set(_old_volume_write2 "destinationIO->write((char*)&volume_space_size2, 4);")
+string(FIND "${_iso_text}" "${_old_volume_write1}" _vol1)
+string(FIND "${_iso_text}" "${_old_volume_write2}" _vol2)
+if(_vol1 EQUAL -1 OR _vol2 EQUAL -1)
+  message(FATAL_ERROR "ff7tk PSX fix: volume descriptor write markers not found")
+endif()
+string(REPLACE "${_old_volume_write1}"
+               "destinationIO->writeIso((char*)&volume_space_size, 4);"
+               _iso_text "${_iso_text}")
+string(REPLACE "${_old_volume_write2}"
+               "destinationIO->writeIso((char*)&volume_space_size2, 4);"
+               _iso_text "${_iso_text}")
+file(WRITE "${_iso_cpp}" "${_iso_text}")
 
-# Fail early if the fixed v1.3.1 source ever stops matching the substitutions.
+# Sanity-check the transformed source before invoking ff7tk's CMake build.
 file(READ "${_iso_cpp}" _iso_after)
 foreach(_marker
     "#include \"psx-cdrom-edc-ecc.h\""
     "const qint64 startIsoPos = posIso();"
     "ff7tk_psx_cd::updateSectorEdcEcc(sectorData)"
-    "ff7tk_psx_cd::writeRepairedSector(*out, data)"
-    "destinationIO->writeIso((char*)&volume_space_size, 4)")
+    "ff7tk_psx_cd::writeRelocatedSector(*out, data)"
+    "destinationIO->writeIso((char*)&volume_space_size, 4);")
   string(FIND "${_iso_after}" "${_marker}" _marker_pos)
   if(_marker_pos EQUAL -1)
-    message(FATAL_ERROR "Failed to apply ff7tk PSX CD-ROM fix; missing marker: ${_marker}")
+    message(FATAL_ERROR "ff7tk PSX fix: transformed source missing marker: ${_marker}")
   endif()
 endforeach()
 
