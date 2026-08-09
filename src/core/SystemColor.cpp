@@ -19,7 +19,6 @@
 #include "SystemColor.h"
 #include "Config.h"
 
-#ifndef Q_OS_MAC
 
 #define systemColor(dark, light) \
     return Config::inDarkMode() ? dark : light;
@@ -54,4 +53,3 @@ QColor SystemColor::grey()
 	systemColor(qRgb(0xCC, 0xCC, 0xCC), qRgb(0x59, 0x59, 0x59))
 }
 
-#endif
