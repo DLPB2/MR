@@ -2,6 +2,8 @@ name: Windows x64 Build
 
 on:
   workflow_dispatch:
+  push:
+  pull_request:
 
 permissions:
   contents: read
@@ -164,7 +166,7 @@ jobs:
             -DPRERELEASE_STRING=" GitHub build"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify Clipboard implementation is compiled
+      - name: Verify Clipboard implementation is linked into GUI
         shell: pwsh
         run: |
           $compileDb = Join-Path "${{ env.BUILD_DIR }}" "compile_commands.json"
@@ -174,10 +176,19 @@ jobs:
 
           $commands = Get-Content -Raw $compileDb
           if ($commands -notmatch 'Clipboard[.]cpp') {
-            throw "Clipboard.cpp is missing from the generated GUI compile rules"
+            throw "Clipboard.cpp is missing from the generated compile rules"
           }
 
-          Write-Host "Verified: Clipboard.cpp is part of the Windows x64 GUI target."
+          $query = & $env:NINJA_EXE -C "${{ env.BUILD_DIR }}" -t query "Makou Reactor.exe" 2>&1 | Out-String
+          Write-Host $query
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to query the Ninja link inputs for Makou Reactor.exe"
+          }
+          if ($query -notmatch 'Clipboard[.]cpp[.]obj') {
+            throw "Clipboard.cpp.obj is NOT an input to Makou Reactor.exe"
+          }
+
+          Write-Host "Verified: Clipboard.cpp.obj is a direct link input to Makou Reactor.exe."
 
       - name: Build and package
         shell: pwsh
