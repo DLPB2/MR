@@ -80,7 +80,7 @@ add_compile_definitions(
     MAKOU_REACTOR_VERSION_TWEAK=0
 )
 
-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets OpenGLWidgets Svg OpenGL LinguistTools Core5Compat REQUIRED)
+find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets OpenGLWidgets Svg OpenGL Xml LinguistTools Core5Compat REQUIRED)
 find_package(ZLIB REQUIRED)
 
 set(REQUIRED_FF7TK_VERSION 1.2.0)
