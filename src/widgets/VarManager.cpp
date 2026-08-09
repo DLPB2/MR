@@ -21,7 +21,7 @@
 #include "../Data.h"
 
 VarManager::VarManager(FieldArchive *fieldArchive, QWidget *parent)
-	: QWidget(parent, Qt::Tool)
+	: QWidget(parent, Qt::Tool), fieldArchive(nullptr), currentField(nullptr)
 {
 	setWindowTitle(tr("Variable manager"));
 
@@ -73,10 +73,16 @@ VarManager::VarManager(FieldArchive *fieldArchive, QWidget *parent)
 	QHBoxLayout *layout3 = new QHBoxLayout();
 
 	searchButton = new QPushButton(tr("Addresses Used"), this);
+	searchScope = new QComboBox(this);
+	searchScope->addItem(tr("Current field"), CurrentFieldScope);
+	searchScope->addItem(tr("All fields"), AllFieldsScope);
+	// Preserve the historical behaviour: Addresses Used scanned the whole archive.
+	searchScope->setCurrentIndex(1);
 	ok = new QPushButton(QIcon::fromTheme(QStringLiteral("document-save")), tr("Save"), this);
 	ok->setEnabled(false);
 
 	layout3->addWidget(searchButton);
+	layout3->addWidget(searchScope);
 	layout3->addStretch();
 	layout3->addWidget(ok);
 
@@ -105,6 +111,7 @@ VarManager::VarManager(FieldArchive *fieldArchive, QWidget *parent)
 	connect(rename, &QPushButton::clicked, this, &VarManager::renameVar);
 	connect(ok, &QPushButton::clicked, this, &VarManager::save);
 	connect(searchButton, &QPushButton::clicked, this, &VarManager::search);
+	connect(searchScope, &QComboBox::currentIndexChanged, this, &VarManager::searchScopeChanged);
 
 	adjustSize();
 }
@@ -112,7 +119,22 @@ VarManager::VarManager(FieldArchive *fieldArchive, QWidget *parent)
 void VarManager::setFieldArchive(FieldArchive *fieldArchive)
 {
 	this->fieldArchive = fieldArchive;
-	searchButton->setEnabled(fieldArchive != nullptr);
+	currentField = nullptr;
+	clearUsageResults();
+	updateSearchButtonState();
+}
+
+void VarManager::setCurrentField(Field *field)
+{
+	if (currentField == field) {
+		return;
+	}
+
+	currentField = field;
+	if (searchScope->currentData().toInt() == CurrentFieldScope) {
+		clearUsageResults();
+	}
+	updateSearchButtonState();
 }
 
 QPair<quint8, quint8> VarManager::banksFromRow(int row)
@@ -270,22 +292,63 @@ void VarManager::save()
 
 void VarManager::search()
 {
-	QMessageBox mess(QMessageBox::Information, tr("Searching"), tr("Searching, it may take a minute..."));
-	mess.setWindowModality(Qt::ApplicationModal);
-	mess.setWindowFlags(Qt::Dialog | Qt::WindowCloseButtonHint | Qt::MSWindowsFixedSizeDialogHint);
-	mess.setStandardButtons(QMessageBox::NoButton);
-	mess.show();
-	QTimer t(this);
-	connect(&t, &QTimer::timeout, this, &VarManager::processEvents);
-	t.start(700);
-	allVars = fieldArchive->searchAllVars(_fieldNames);
-	quint8 b = quint8(bank->value());
+	allVars.clear();
+	_fieldNames.clear();
 
+	if (searchScope->currentData().toInt() == CurrentFieldScope) {
+		if (!currentField) {
+			return;
+		}
+
+		currentField->scriptsAndTexts()->searchAllVars(allVars);
+	} else {
+		if (!fieldArchive) {
+			return;
+		}
+
+		QMessageBox mess(QMessageBox::Information, tr("Searching"), tr("Searching, it may take a minute..."));
+		mess.setWindowModality(Qt::ApplicationModal);
+		mess.setWindowFlags(Qt::Dialog | Qt::WindowCloseButtonHint | Qt::MSWindowsFixedSizeDialogHint);
+		mess.setStandardButtons(QMessageBox::NoButton);
+		mess.show();
+		QTimer t(this);
+		connect(&t, &QTimer::timeout, this, &VarManager::processEvents);
+		t.start(700);
+		allVars = fieldArchive->searchAllVars(_fieldNames);
+		t.stop();
+	}
+
+	quint8 b = quint8(bank->value());
 	for (quint16 address=0; address<256; ++address) {
 		colorizeItem(liste2->topLevelItem(address), FF7Var(qint8(b), quint8(address), FF7Var::VarSize()));
 	}
+}
 
-	t.stop();
+void VarManager::searchScopeChanged()
+{
+	clearUsageResults();
+	updateSearchButtonState();
+}
+
+void VarManager::clearUsageResults()
+{
+	allVars.clear();
+	_fieldNames.clear();
+
+	if (!liste2 || liste2->topLevelItemCount() == 0) {
+		return;
+	}
+
+	quint8 b = quint8(bank->value());
+	for (quint16 address = 0; address < 256; ++address) {
+		colorizeItem(liste2->topLevelItem(address), FF7Var(qint8(b), quint8(address), FF7Var::VarSize()));
+	}
+}
+
+void VarManager::updateSearchButtonState()
+{
+	const bool currentFieldScope = searchScope->currentData().toInt() == CurrentFieldScope;
+	searchButton->setEnabled(fieldArchive != nullptr && (!currentFieldScope || currentField != nullptr));
 }
 
 void VarManager::processEvents() const
