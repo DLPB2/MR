@@ -98,8 +98,6 @@ set(PROJECT_SOURCES
     #"src/FieldModelThread.h"
     "src/Window.cpp"
     "src/Window.h"
-    "src/core/Clipboard.cpp"
-    "src/core/Clipboard.h"
     "src/core/Config.cpp"
     "src/core/Config.h"
     "src/core/CsvFile.cpp"
@@ -512,6 +510,14 @@ endif()
 # GUI
 if(GUI)
     qt_add_executable(${GUI_TARGET} MANUAL_FINALIZATION MACOSX_BUNDLE WIN32 ${PROJECT_SOURCES} ${RESOURCES} ${EXTRA_RESOURCES_GUI})
+
+    # Keep the clipboard implementation attached directly to the GUI target.
+    # OpcodeList uses these symbols and Windows/Ninja must link Clipboard.cpp.obj
+    # into Makou Reactor.exe.  Do not move this file into CLI-only sources.
+    target_sources(${GUI_TARGET} PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/core/Clipboard.cpp"
+        "${CMAKE_SOURCE_DIR}/src/core/Clipboard.h"
+    )
     target_include_directories(${GUI_TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/src")
     target_link_libraries(${GUI_TARGET} PRIVATE
         Qt::OpenGL
