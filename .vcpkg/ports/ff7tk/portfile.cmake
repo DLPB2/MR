@@ -1,7 +1,9 @@
-if(VCPKG_TARGET_IS_WINDOWS)
-  set(VCPKG_C_FLAGS "-bigobj ${VCPKG_C_FLAGS}")
-  set(VCPKG_CXX_FLAGS "-bigobj ${VCPKG_CXX_FLAGS}")
+if(NOT VCPKG_TARGET_IS_WINDOWS OR NOT VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
+  message(FATAL_ERROR "The Makou Reactor ff7tk port supports Windows x64 only.")
 endif()
+
+set(VCPKG_C_FLAGS "-bigobj ${VCPKG_C_FLAGS}")
+set(VCPKG_CXX_FLAGS "-bigobj ${VCPKG_CXX_FLAGS}")
 
 vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH

@@ -4,7 +4,7 @@
   "description": "Toolkit for making tools to edit Final Fantasy VII",
   "homepage": "https://github.com/sithlord48/ff7tk",
   "license": " LGPL-3.0",
-  "supports": "(windows & !uwp), (linux, osx)",
+  "supports": "windows & !uwp & x64",
   "dependencies": [
     "zlib",
     {
