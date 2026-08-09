@@ -573,7 +573,8 @@ qsizetype Section1File::grpScriptCount() const
 
 bool Section1File::insertGrpScript(int row, const GrpScript &grpScript)
 {
-	if (grpScriptCount() < maxGrpScriptCount()) {
+	if (row >= 0 && row <= _grpScripts.size()
+	        && grpScriptCount() < maxGrpScriptCount()) {
 		_grpScripts.insert(row, grpScript);
 		for (GrpScript &grpScript : _grpScripts) {
 			grpScript.shiftGroupIds(row - 1, +1);
@@ -586,7 +587,7 @@ bool Section1File::insertGrpScript(int row, const GrpScript &grpScript)
 
 void Section1File::removeGrpScript(int row)
 {
-	if (row < _grpScripts.size()) {
+	if (row >= 0 && row < _grpScripts.size()) {
 		_grpScripts.removeAt(row);
 		for (GrpScript &grpScript : _grpScripts) {
 			grpScript.shiftGroupIds(row, -1);
@@ -597,7 +598,7 @@ void Section1File::removeGrpScript(int row)
 
 bool Section1File::moveGrpScript(int row, bool direction)
 {
-	if (row >= _grpScripts.size()) {
+	if (row < 0 || row >= _grpScripts.size()) {
 		return false;
 	}
 
