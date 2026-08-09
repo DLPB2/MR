@@ -13,6 +13,7 @@ env:
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
   CMAKE_BUILD_TYPE: Release
   VCPKG_TARGET_TRIPLET: x64-windows
+  VCPKG_HOST_TRIPLET: x64-windows
   VCPKG_KEEP_ENV_VARS: PATH;QT_HOST_PATH
 
 jobs:
@@ -25,6 +26,18 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
+
+      - name: Reject case-insensitive path collisions
+        shell: pwsh
+        run: |
+          # Windows cannot safely check out two tracked paths that differ only by case.
+          $groups = git ls-files | Group-Object { $_.ToLowerInvariant() } | Where-Object Count -gt 1
+          if ($groups) {
+            foreach ($group in $groups) {
+              Write-Error ("Case-insensitive path collision: " + ($group.Group -join ", "))
+            }
+            throw "Repository contains paths that collide on Windows."
+          }
 
       - name: Enable MSVC x64 environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -146,6 +159,13 @@ jobs:
             }
           }
 
+          $clipboardSource = Get-Content -Raw "src\core\Clipboard.cpp"
+          if ($clipboardSource -notmatch 'Clipboard::instance\s*\(' -or
+              $clipboardSource -notmatch 'Clipboard::ff7FieldScriptOpcodes\s*\(' -or
+              $clipboardSource -notmatch 'Clipboard::setFF7FieldScriptOpcodes\s*\(') {
+            throw "src/core/Clipboard.cpp does not contain the required Clipboard implementation."
+          }
+
       - name: Configure Windows x64 Release
         shell: pwsh
         run: |
@@ -159,6 +179,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_DIR }}" `
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DVCPKG_HOST_TRIPLET=x64-windows `
             -DGUI=ON `
             -DCLI=OFF `
             -DPRERELEASE_STRING=" GitHub build"
