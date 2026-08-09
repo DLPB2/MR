@@ -87,13 +87,13 @@ void FieldModel::drawP(Renderer *gpuRenderer, FieldModelFile *data, float scale,
 		return;
 	}
 
-	int curPolyType = 0;
-
 	for (FieldModelPart *part : bone.parts()) {
 		for (FieldModelGroup *g : part->groups()) {
 			bool groupTextureBinded = false;
+
 			if (g->hasTexture()) {
 				QImage tex = data->loadedTexture(g);
+
 				if (!tex.isNull()) {
 					gpuRenderer->bindTexture(tex);
 					groupTextureBinded = true;
@@ -101,61 +101,106 @@ void FieldModel::drawP(Renderer *gpuRenderer, FieldModelFile *data, float scale,
 			}
 
 			for (const Poly *p : g->polygons()) {
-				if (curPolyType != p->count()) {
-					if (curPolyType != 0) {
-						if (p->count() == 3) {
-							gpuRenderer->draw(RendererPrimitiveType::PT_TRIANGLES);
-						} else {
-							gpuRenderer->draw(RendererPrimitiveType::PT_QUADS);
-						}
-					}
-
-					curPolyType = p->count();
+				if (p->count() < 3) {
+					continue;
 				}
 
 				QRgba64 color;
 
 				if (p->isMonochrome()) {
 					const QRgb &_color = p->color();
-					color = QRgba64::fromRgba(qRed(_color) * globalColor[0], qGreen(_color) * globalColor[1], qBlue(_color) * globalColor[2], UINT8_MAX);
+
+					color = QRgba64::fromRgba(
+						qRed(_color) * globalColor[0],
+						qGreen(_color) * globalColor[1],
+						qBlue(_color) * globalColor[2],
+						UINT8_MAX
+					);
 				}
 
-				for (int j=0; j<p->count(); ++j) {
-					const PolyVertex &vertex = p->vertex(j);
-					QVector3D position(vertex.x/scale, vertex.y/scale, vertex.z/scale);
-					QVector2D texcoord(0, 0);
+				/*
+				 * Convert every polygon to triangles.
+				 *
+				 * Triangle:
+				 *     0, 1, 2
+				 *
+				 * Quad:
+				 *     0, 1, 2
+				 *     0, 2, 3
+				 *
+				 * Larger polygons are converted using a triangle fan:
+				 *     0, 1, 2
+				 *     0, 2, 3
+				 *     0, 3, 4
+				 *     ...
+				 */
+				for (int triangle = 0; triangle < p->count() - 2; ++triangle) {
+					const int indices[3] = {
+						0,
+						triangle + 1,
+						triangle + 2
+					};
 
-					if (!p->isMonochrome()) {
-						QRgb _color = p->color(j);
-						// TODO: color projector effect
-						/*
-						float spot = qMax(vertex.x * 0.0f + vertex.y * 0.0f + (1.0 - (vertex.z/scale)) * -1.0f, 0.0f);
-						if (spot >= qCos(180.0))
-							spot = 1.0;
-						else
-							spot = qPow(spot, 0.0);
-						*/
-						color = QRgba64::fromRgba(qRed(_color) * globalColor[0], qGreen(_color) * globalColor[1], qBlue(_color) * globalColor[2], UINT8_MAX);
+					for (int j : indices) {
+						const PolyVertex &vertex = p->vertex(j);
+
+						QVector3D position(
+							vertex.x / scale,
+							vertex.y / scale,
+							vertex.z / scale
+						);
+
+						QVector2D texcoord(0, 0);
+
+						if (!p->isMonochrome()) {
+							QRgb _color = p->color(j);
+
+							// TODO: color projector effect
+							/*
+							float spot = qMax(
+								vertex.x * 0.0f +
+								vertex.y * 0.0f +
+								(1.0 - (vertex.z / scale)) * -1.0f,
+								0.0f
+							);
+
+							if (spot >= qCos(180.0))
+								spot = 1.0;
+							else
+								spot = qPow(spot, 0.0);
+							*/
+
+							color = QRgba64::fromRgba(
+								qRed(_color) * globalColor[0],
+								qGreen(_color) * globalColor[1],
+								qBlue(_color) * globalColor[2],
+								UINT8_MAX
+							);
+						}
+
+						if (groupTextureBinded && p->hasTexture()) {
+							const TexCoord &_coord = p->texCoord(j);
+
+							texcoord = QVector2D(
+								_coord.x,
+								_coord.y
+							);
+						}
+
+						gpuRenderer->bufferVertex(
+							position,
+							color,
+							texcoord
+						);
 					}
-
-					if (groupTextureBinded && p->hasTexture()) {
-						const TexCoord &_coord = p->texCoord(j);
-						texcoord = QVector2D(_coord.x, _coord.y);
-					}
-
-					gpuRenderer->bufferVertex(position, color, texcoord);
 				}
 			}
 
-			if (curPolyType != 0) {
-				if (curPolyType == 3) {
-					gpuRenderer->draw(RendererPrimitiveType::PT_TRIANGLES);
-				} else {
-					gpuRenderer->draw(RendererPrimitiveType::PT_QUADS);
-				}
-
-				curPolyType = 0;
-			}
+			/*
+			 * All geometry above has been converted to triangles,
+			 * so GL_QUADS is no longer required.
+			 */
+			gpuRenderer->draw(RendererPrimitiveType::PT_TRIANGLES);
 		}
 	}
 }
