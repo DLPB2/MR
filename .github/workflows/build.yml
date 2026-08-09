@@ -61,7 +61,7 @@ jobs:
             if (Test-Path "vcpkg") {
               Remove-Item -Recurse -Force "vcpkg"
             }
-            git clone --filter=blob:none https://github.com/microsoft/vcpkg.git vcpkg
+            git clone https://github.com/microsoft/vcpkg.git vcpkg
           }
           & .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
